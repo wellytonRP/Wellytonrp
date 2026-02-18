@@ -1,1 +1,170 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Leitor (Web Speech API)</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;line-height:1.35}
+    textarea,select,button,input{font:inherit}
+    textarea{width:100%;min-height:160px;padding:12px;border:1px solid #ccc;border-radius:12px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
+    select,input[type="text"]{padding:10px;border:1px solid #ccc;border-radius:12px}
+    input[type="range"]{width:180px}
+    button{padding:10px 14px;border:1px solid #111;border-radius:12px;background:#111;color:#fff;cursor:pointer}
+    button.secondary{background:#fff;color:#111}
+    .status{padding:10px 12px;border:1px dashed #bbb;border-radius:12px;white-space:pre-wrap}
+    small{color:#555}
+    label{font-size:14px}
+  </style>
+</head>
+<body>
+  <h2>Leitor de Texto (Web Speech API)</h2>
 
+  <textarea id="texto" placeholder="Digite o texto aqui...">Olá! Este é um teste de voz no Android.</textarea>
+
+  <div class="row">
+    <label for="lang">Idioma:</label>
+    <select id="lang">
+      <option value="pt-BR" selected>pt-BR</option>
+      <option value="pt-PT">pt-PT</option>
+      <option value="en-US">en-US</option>
+      <option value="es-ES">es-ES</option>
+    </select>
+
+    <label for="voz">Voz:</label>
+    <select id="voz" style="min-width:280px"></select>
+
+    <button id="recarregar" class="secondary">Recarregar vozes</button>
+  </div>
+
+  <div class="row">
+    <label>Velocidade:</label>
+    <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1">
+    <span id="rateVal">1.0</span>
+
+    <label>Tom:</label>
+    <input id="pitch" type="range" min="0" max="2" step="0.1" value="1">
+    <span id="pitchVal">1.0</span>
+
+    <label>Volume:</label>
+    <input id="vol" type="range" min="0" max="1" step="0.1" value="1">
+    <span id="volVal">1.0</span>
+  </div>
+
+  <div class="row">
+    <button id="falar">Falar</button>
+    <button id="pausar" class="secondary">Pausar</button>
+    <button id="continuar" class="secondary">Continuar</button>
+    <button id="parar" class="secondary">Parar</button>
+  </div>
+
+  <div id="status" class="status">Status: pronto.</div>
+  <div style="margin-top:10px">
+    <small>Dica: no Android, instale vozes em Configurações → Idioma e entrada → Saída de texto para fala (TTS).</small>
+  </div>
+
+<script>
+  const synth = window.speechSynthesis;
+  const $ = (id) => document.getElementById(id);
+
+  function setStatus(msg){ $("status").textContent = "Status: " + msg; }
+
+  function updateVals(){
+    $("rateVal").textContent = Number($("rate").value).toFixed(1);
+    $("pitchVal").textContent = Number($("pitch").value).toFixed(1);
+    $("volVal").textContent = Number($("vol").value).toFixed(1);
+  }
+  ["rate","pitch","vol"].forEach(id => $(id).addEventListener("input", updateVals));
+  updateVals();
+
+  function getVoicesSafe(){
+    try { return synth.getVoices() || []; } catch { return []; }
+  }
+
+  function fillVoices(){
+    const lang = $("lang").value;
+    const voices = getVoicesSafe();
+
+    const filtered = voices.filter(v => (v.lang || "").toLowerCase() === lang.toLowerCase());
+    const list = filtered.length ? filtered : voices;
+
+    $("voz").innerHTML = "";
+    if (!list.length){
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "Nenhuma voz carregada (toque em Recarregar)";
+      $("voz").appendChild(opt);
+      setStatus("nenhuma voz encontrada ainda.");
+      return [];
+    }
+
+    list.sort((a,b) => (a.lang+a.name).localeCompare(b.lang+b.name));
+
+    list.forEach((v, idx) => {
+      const opt = document.createElement("option");
+      opt.value = String(idx);
+      opt.textContent = `${v.name} — ${v.lang}${v.default ? " (padrão)" : ""}`;
+      $("voz").appendChild(opt);
+    });
+
+    setStatus(`vozes carregadas: ${list.length} (${filtered.length ? "filtradas" : "todas"}).`);
+    return list;
+  }
+
+  let currentVoiceList = [];
+
+  function reloadVoices(){
+    currentVoiceList = fillVoices();
+    setTimeout(() => { currentVoiceList = fillVoices() || currentVoiceList; }, 250);
+    setTimeout(() => { currentVoiceList = fillVoices() || currentVoiceList; }, 800);
+  }
+
+  $("recarregar").onclick = reloadVoices;
+  $("lang").onchange = reloadVoices;
+
+  if ("onvoiceschanged" in synth) {
+    synth.onvoiceschanged = () => reloadVoices();
+  }
+  reloadVoices();
+
+  function buildUtterance(text){
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = $("lang").value;
+    u.rate = Number($("rate").value);
+    u.pitch = Number($("pitch").value);
+    u.volume = Number($("vol").value);
+
+    const idx = Number($("voz").value);
+    const voices = currentVoiceList.length ? currentVoiceList : getVoicesSafe();
+    if (voices && voices[idx]) u.voice = voices[idx];
+
+    u.onstart = () => setStatus("falando...");
+    u.onend = () => setStatus("finalizado.");
+    u.onerror = (e) => setStatus("erro: " + (e.error || "desconhecido"));
+    return u;
+  }
+
+  $("falar").onclick = () => {
+    const text = $("texto").value.trim();
+    if (!text) return setStatus("digite um texto.");
+
+    synth.cancel();
+    synth.speak(buildUtterance(text));
+  };
+
+  $("pausar").onclick = () => {
+    if (synth.speaking && !synth.paused) { synth.pause(); setStatus("pausado."); }
+  };
+
+  $("continuar").onclick = () => {
+    if (synth.paused) { synth.resume(); setStatus("continuando..."); }
+  };
+
+  $("parar").onclick = () => {
+    synth.cancel();
+    setStatus("parado.");
+  };
+</script>
+</body>
+</html>
